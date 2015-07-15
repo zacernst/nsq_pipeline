@@ -9,6 +9,7 @@ import time
 import nsq
 from nsq_pipeline import NSQPipeline
 
+writer = nsq.Writer(['127.0.0.1:4150'])
 
 class NSQPipelineException(Exception):
     pass
@@ -47,25 +48,35 @@ class NSQFunctionTemplate(object):
                 datum_identifier == self.datum_identifier)
 
     def add_datum_if_matches(self, datum):
+        global writer
         """Assume `datum` is a dictionary containing keys:
            1. `function_identifier`  #: source of the data
            2. `datum_identifier`     #: unique id for keeping in sync
            3. `payload`              #: the data
         """
+        print 'Got a datum:'
+        print datum
         function_identifier = datum['function_identifier']
         datum_identifier = datum['datum_identifier']
         payload = datum['payload']
         found_matching_template = False
         if self.matches_template(function_identifier, datum_identifier):
             self.saturated_arguments[function_identifier] = datum['payload']
-            print 'added datum:', datum
+            print 'added datum in matches_template loop:', datum
             found_matching_template = True
 
         # If saturated, then we need to send a message
         # send dictionary to topic with target_function_identifier as topic
         if self.saturated():
             print 'saturated', self
-            datum_to_send = {}  ##### SEND A MESSAGE HERE, WE'RE SATURATED!
+            datum_to_send = {
+                'signature_tuple': self.signature_tuple,
+                'datum_identifier': self.datum_identifier,
+                'target_function_identifier': self.target_function_identifier,
+                'time_saturated': time.time(),
+                'saturated_arguments': self.saturated_arguments}
+            writer.pub(self.target_function_identifier, pickle.dumps(datum_to_send))
+
             # Send to the topic identified by the destination function's name
         else:
             print 'not saturated', self
@@ -90,6 +101,7 @@ class NSQAutoPipeline(object):
             print 'checking tamplates...'
             found_matching_template = False
             for template in self.function_templates:
+                print template
                 if template.add_datum_if_matches(message):
                     found_matching_template = True
             if not found_matching_template:
@@ -116,6 +128,23 @@ class NSQAutoPipeline(object):
                 if (not argument.startswith('_source') and argument not in
                         self.function_signatures):
                     bad_signatures.append((name, argument,))
+                    continue
+            # The function and its signature are validated
+            print '--->', name, signature
+
+            function_to_wrap = self.getattr(name)
+            def wrap_the_function(function_to_wrap):
+                def wrapped_function(message):
+                    payload = message.body
+                    print payload
+                # unpickle the payload, get the argument only
+                # call the wrapped function to get the right return value
+                # send the return value in a message with metadata
+                # finish the message (remember to async these messages)
+                # define an nsq.Reader object which calls the wrapped function
+                # hopefully, nsq will add the reader automatically
+                # perhaps we don't need the "wrap_the_function"
+
         if len(bad_signatures) > 0:
             raise NSQPipelineException(
                 'Bad pipeline: argument(s) without source: %s' % bad_signatures)
@@ -141,7 +170,6 @@ def demo():
     print 'adding datum_2'
     function_template.add_datum_if_matches(datum_2)
 
-    #writer = nsq.Writer(['127.0.0.1:4150'])
 
     class MyPipeline(NSQAutoPipeline):
         #def some_function_2(self, some_function_1):

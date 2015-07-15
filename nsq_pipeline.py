@@ -26,14 +26,8 @@ class NSQPipeline(object):
         self.listen_topic = listen_topic
         self.send_topic = send_topic
         self.writer = nsq.Writer(publication_addresses)
-        if source:
-            self.input_transform = lambda x: x
-        else:
-            self.input_transform = pickle.loads
-        if send_topic is None:
-            self.output_transform = lambda x: x
-        else:
-            self.output_transform = pickle.dumps
+        self.input_transform = pickle.loads
+        self.output_transform = pickle.dumps
 
     def __call__(self, obj):
         """This function is executed when a function is decorated, but after
@@ -45,6 +39,9 @@ class NSQPipeline(object):
         def wrapper(function):
             def wrapped_function(message):
                 message.enable_async()
+                print 'in the wrapped_function'
+                print message.body
+                print pickle.loads(message.body)
                 output = function(self.input_transform(message.body))
                 if self.send_topic is not None:
                     self.writer.pub(self.send_topic,
