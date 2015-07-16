@@ -86,6 +86,15 @@ class NSQAutoPipeline(object):
     """Pipeline"""
     def __init__(self):
 
+        def _wrap(function, signature):
+            def _wrapped_function(**kwargs):
+                # change this so that instead of kwargs, it gets a Message
+                # and the kwargs are extracted from the message.body payload
+                # (after it's been unpickled)
+                out = function(**kwargs)
+                return out
+            return _wrapped_function
+
         @NSQPipeline(listen_topic='_pool') # Assume ALL messages are pickled
         def _listener(message):
             print 'Just heard: %s' % message
@@ -120,34 +129,13 @@ class NSQAutoPipeline(object):
                     argument for argument in inspect.getargspec(attribute).args
                     if argument != 'self']
                 self.function_signatures[function_name] = argument_list
-        # Validate the function signatures to make sure nothing's orphaned
-        # We could do fancy graph-checking stuff later if we want
-        bad_signatures = []
-        for name, signature in self.function_signatures.iteritems():
-            for argument in signature:
-                if (not argument.startswith('_source') and argument not in
-                        self.function_signatures):
-                    bad_signatures.append((name, argument,))
-                    continue
-            # The function and its signature are validated
-            print '--->', name, signature
 
-            function_to_wrap = self.getattr(name)
-            def wrap_the_function(function_to_wrap):
-                def wrapped_function(message):
-                    payload = message.body
-                    print payload
-                # unpickle the payload, get the argument only
-                # call the wrapped function to get the right return value
-                # send the return value in a message with metadata
-                # finish the message (remember to async these messages)
-                # define an nsq.Reader object which calls the wrapped function
-                # hopefully, nsq will add the reader automatically
-                # perhaps we don't need the "wrap_the_function"
-
-        if len(bad_signatures) > 0:
-            raise NSQPipelineException(
-                'Bad pipeline: argument(s) without source: %s' % bad_signatures)
+        print 'self.function_signatures:', self.function_signatures
+        for function_name, function_signature in self.function_signatures.iteritems():
+            some_function = getattr(self, function_name)
+            f = _wrap(some_function, function_signature)
+        # now we can call f(**{'_source_1': 'foo'})
+        import pdb; pdb.set_trace()
 
     def _make_function_templates(self, datum_identifier):
         """Make a new set of templates for when new _source data appears."""
